@@ -23,11 +23,6 @@ func dataLDAPObject() *schema.Resource {
 				Computed: true,
 				Elem:     &schema.Schema{Type: schema.TypeString},
 			},
-			"objects": {
-				Type:     schema.TypeList,
-				Computed: true,
-				Elem:     dataLDAPObject(),
-			},
 		},
 	}
 }
