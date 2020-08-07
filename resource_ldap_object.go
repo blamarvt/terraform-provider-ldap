@@ -25,6 +25,7 @@ func dataLDAPObject() *schema.Resource {
 			"dns": {
 				Type:       schema.TypeList,
 				Computed:   true,
+				ForceNew:   true,
 				ConfigMode: schema.SchemaConfigModeAttr,
 				Elem:       &schema.Schema{Type: schema.TypeString},
 			},
