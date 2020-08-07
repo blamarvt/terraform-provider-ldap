@@ -327,12 +327,14 @@ func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
 
 	log.Printf("[DEBUG] ldap_object::find - found %d entries", len(sr.Entries))
 
-	dns := make([]string, len(sr.Entries))
+	dns := []string{}
 
-	for x, entry := range sr.Entries {
-		dns[x] = entry.DN
+	for _, entry := range sr.Entries {
 		log.Printf("[DEBUG] ldap_object::find - found %s", entry.DN)
+		dns = append(dns, entry.DN)
 	}
+
+	log.Printf("[DEBUG] ldap_object::find - setting 'dns' to %v", dns)
 
 	if err := d.Set("dns", dns); err != nil {
 		return fmt.Errorf("[WARN] Error setting DNs: %s", err)
