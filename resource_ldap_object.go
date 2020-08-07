@@ -314,7 +314,7 @@ func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
 		0,
 		0,
 		false,
-		"",
+		"(objectClass=*)",
 		[]string{"*"},
 		nil,
 	)
