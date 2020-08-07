@@ -46,7 +46,7 @@ func Provider() terraform.ResourceProvider {
 		},
 
 		DataSourcesMap: map[string]*schema.Resource{
-			"ldap_object": resourceLDAPObject(),
+			"ldap_object": dataLDAPObject(),
 		},
 
 		ConfigureFunc: configureProvider,
