@@ -315,7 +315,7 @@ func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
 		0,
 		0,
 		false,
-		"(objectclass=*)",
+		"",
 		[]string{"*"},
 		nil,
 	)
@@ -325,6 +325,8 @@ func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
 		log.Printf("[DEBUG] ldap_object::find- lookup for %q returned an error %v", baseDN, err)
 		return err
 	}
+
+	log.Printf("[DEBUG] ldap_object::find - found %d entries", len(sr.Entries))
 
 	dns := make([]string, len(sr.Entries))
 
