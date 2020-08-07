@@ -18,6 +18,10 @@ func dataLDAPObject() *schema.Resource {
 	return &schema.Resource{
 		Read: resourceLDAPObjectFind,
 		Schema: map[string]*schema.Schema{
+			"base_dn": {
+				Type:     schema.TypeString,
+				Required: true,
+			},
 			"dns": {
 				Type:     schema.TypeList,
 				Computed: true,
