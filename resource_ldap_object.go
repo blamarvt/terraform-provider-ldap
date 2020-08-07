@@ -14,44 +14,21 @@ import (
 	"gopkg.in/ldap.v2"
 )
 
-var ldapObjectSchema = map[string]*schema.Schema{
-	"dn": {
-		Type:        schema.TypeString,
-		Description: "The Distinguished Name (DN) of the object, as the concatenation of its RDN (unique among siblings) and its parent's DN.",
-		Required:    true,
-		ForceNew:    true,
-	},
-	"object_classes": {
-		Type:        schema.TypeSet,
-		Description: "The set of classes this object conforms to (e.g. organizationalUnit, inetOrgPerson).",
-		Elem:        &schema.Schema{Type: schema.TypeString},
-		Set:         schema.HashString,
-		Required:    true,
-	},
-	"attributes": {
-		Type:        schema.TypeSet,
-		Description: "The map of attributes of this object; each attribute can be multi-valued.",
-		Set:         attributeHash,
-		MinItems:    0,
-
-		Elem: &schema.Schema{
-			Type:        schema.TypeMap,
-			Description: "The list of values for a given attribute.",
-			MinItems:    1,
-			MaxItems:    1,
-			Elem: &schema.Schema{
-				Type:        schema.TypeString,
-				Description: "The individual value for the given attribute.",
-			},
-		},
-		Optional: true,
-	},
-}
-
 func dataLDAPObject() *schema.Resource {
 	return &schema.Resource{
-		Read:   resourceLDAPObjectRead,
-		Schema: ldapObjectSchema,
+		Read: resourceLDAPObjectFind,
+		Schema: map[string]*schema.Schema{
+			"dns": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+			},
+			"objects": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem:     dataLDAPObject(),
+			},
+		},
 	}
 }
 
@@ -67,7 +44,39 @@ func resourceLDAPObject() *schema.Resource {
 			State: resourceLDAPObjectImport,
 		},
 
-		Schema: ldapObjectSchema,
+		Schema: map[string]*schema.Schema{
+			"dn": {
+				Type:        schema.TypeString,
+				Description: "The Distinguished Name (DN) of the object, as the concatenation of its RDN (unique among siblings) and its parent's DN.",
+				Required:    true,
+				ForceNew:    true,
+			},
+			"object_classes": {
+				Type:        schema.TypeSet,
+				Description: "The set of classes this object conforms to (e.g. organizationalUnit, inetOrgPerson).",
+				Elem:        &schema.Schema{Type: schema.TypeString},
+				Set:         schema.HashString,
+				Required:    true,
+			},
+			"attributes": {
+				Type:        schema.TypeSet,
+				Description: "The map of attributes of this object; each attribute can be multi-valued.",
+				Set:         attributeHash,
+				MinItems:    0,
+
+				Elem: &schema.Schema{
+					Type:        schema.TypeMap,
+					Description: "The list of values for a given attribute.",
+					MinItems:    1,
+					MaxItems:    1,
+					Elem: &schema.Schema{
+						Type:        schema.TypeString,
+						Description: "The individual value for the given attribute.",
+					},
+				},
+				Optional: true,
+			},
+		},
 	}
 }
 
@@ -286,6 +295,44 @@ func resourceLDAPObjectDelete(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 	log.Printf("[DEBUG] ldap_object::delete - %q removed", dn)
+	return nil
+}
+
+func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
+	client := meta.(*ldap.Conn)
+	baseDN := d.Get("base_dn").(string)
+
+	log.Printf("[DEBUG] ldap_object::find - looking for objects in %q", baseDN)
+
+	// when searching by DN, you don't need t specify the base DN a search
+	// filter a "subtree" scope: just put the DN (i.e. the primary key) as the
+	// base DN with a "base object" scope, and the returned object will be the
+	// entry, if it exists
+	request := ldap.NewSearchRequest(
+		baseDN,
+		ldap.ScopeSingleLevel,
+		ldap.NeverDerefAliases,
+		0,
+		0,
+		false,
+		"(objectclass=*)",
+		[]string{"*"},
+		nil,
+	)
+
+	sr, err := client.Search(request)
+	if err != nil {
+		log.Printf("[DEBUG] ldap_object::find- lookup for %q returned an error %v", baseDN, err)
+		return err
+	}
+
+	dns := make([]string, len(sr.Entries))
+
+	for x, entry := range sr.Entries {
+		dns[x] = entry.DN
+	}
+
+	d.Set("dns", dns)
 	return nil
 }
 
