@@ -14,6 +14,47 @@ import (
 	"gopkg.in/ldap.v2"
 )
 
+var ldapObjectSchema = map[string]*schema.Schema{
+	"dn": {
+		Type:        schema.TypeString,
+		Description: "The Distinguished Name (DN) of the object, as the concatenation of its RDN (unique among siblings) and its parent's DN.",
+		Required:    true,
+		ForceNew:    true,
+	},
+	"object_classes": {
+		Type:        schema.TypeSet,
+		Description: "The set of classes this object conforms to (e.g. organizationalUnit, inetOrgPerson).",
+		Elem:        &schema.Schema{Type: schema.TypeString},
+		Set:         schema.HashString,
+		Required:    true,
+	},
+	"attributes": {
+		Type:        schema.TypeSet,
+		Description: "The map of attributes of this object; each attribute can be multi-valued.",
+		Set:         attributeHash,
+		MinItems:    0,
+
+		Elem: &schema.Schema{
+			Type:        schema.TypeMap,
+			Description: "The list of values for a given attribute.",
+			MinItems:    1,
+			MaxItems:    1,
+			Elem: &schema.Schema{
+				Type:        schema.TypeString,
+				Description: "The individual value for the given attribute.",
+			},
+		},
+		Optional: true,
+	},
+}
+
+func dataLDAPObject() *schema.Resource {
+	return &schema.Resource{
+		Read:   resourceLDAPObjectRead,
+		Schema: ldapObjectSchema,
+	}
+}
+
 func resourceLDAPObject() *schema.Resource {
 	return &schema.Resource{
 		Create: resourceLDAPObjectCreate,
@@ -26,39 +67,7 @@ func resourceLDAPObject() *schema.Resource {
 			State: resourceLDAPObjectImport,
 		},
 
-		Schema: map[string]*schema.Schema{
-			"dn": {
-				Type:        schema.TypeString,
-				Description: "The Distinguished Name (DN) of the object, as the concatenation of its RDN (unique among siblings) and its parent's DN.",
-				Required:    true,
-				ForceNew:    true,
-			},
-			"object_classes": {
-				Type:        schema.TypeSet,
-				Description: "The set of classes this object conforms to (e.g. organizationalUnit, inetOrgPerson).",
-				Elem:        &schema.Schema{Type: schema.TypeString},
-				Set:         schema.HashString,
-				Required:    true,
-			},
-			"attributes": {
-				Type:        schema.TypeSet,
-				Description: "The map of attributes of this object; each attribute can be multi-valued.",
-				Set:         attributeHash,
-				MinItems:    0,
-
-				Elem: &schema.Schema{
-					Type:        schema.TypeMap,
-					Description: "The list of values for a given attribute.",
-					MinItems:    1,
-					MaxItems:    1,
-					Elem: &schema.Schema{
-						Type:        schema.TypeString,
-						Description: "The individual value for the given attribute.",
-					},
-				},
-				Optional: true,
-			},
-		},
+		Schema: ldapObjectSchema,
 	}
 }
 
