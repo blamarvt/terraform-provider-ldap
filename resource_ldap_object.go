@@ -303,6 +303,8 @@ func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ldap.Conn)
 	baseDN := d.Get("base_dn").(string)
 
+	d.Set("dns", []string{"one"})
+
 	log.Printf("[DEBUG] ldap_object::find - looking for objects in %q", baseDN)
 
 	// when searching by DN, you don't need t specify the base DN a search
