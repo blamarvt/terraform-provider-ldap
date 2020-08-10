@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"log"
+	"strconv"
+	"time"
 
 	"fmt"
 	"strings"
@@ -343,6 +345,8 @@ func resourceLDAPObjectFind(d *schema.ResourceData, meta interface{}) error {
 	if err := d.Set("dns", dns); err != nil {
 		return fmt.Errorf("[WARN] Error setting DNs: %s", err)
 	}
+
+	d.SetId(strconv.FormatInt(time.Now().Unix(), 10))
 
 	return nil
 }
