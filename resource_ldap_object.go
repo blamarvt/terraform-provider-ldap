@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/hashcode"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/r3labs/diff"
 	"gopkg.in/ldap.v2"
 )
 
@@ -62,20 +63,15 @@ func resourceLDAPObject() *schema.Resource {
 				Required:    true,
 			},
 			"attributes": {
-				Type:        schema.TypeSet,
+				Type:        schema.TypeMap,
 				Description: "The map of attributes of this object; each attribute can be multi-valued.",
-				Set:         attributeHash,
 				MinItems:    0,
-
 				Elem: &schema.Schema{
-					Type:        schema.TypeMap,
-					Description: "The list of values for a given attribute.",
-					MinItems:    1,
-					MaxItems:    1,
-					Elem: &schema.Schema{
-						Type:        schema.TypeString,
-						Description: "The individual value for the given attribute.",
-					},
+					Type:        schema.TypeSet,
+					Description: "The individual value for the given attribute.",
+					Elem:        &schema.Schema{Type: schema.TypeString},
+					Set:         schema.HashString,
+					Required:    true,
 				},
 				Optional: true,
 			},
@@ -110,14 +106,14 @@ func resourceLDAPObjectImport(d *schema.ResourceData, meta interface{}) (importe
 						}
 						file.WriteString(fmt.Sprintf("  object_classes = [ %s ]\n", strings.Join(classes, ", ")))
 						if attributes, ok := d.GetOk("attributes"); ok {
-							attributes := attributes.(*schema.Set).List()
+							attributes := attributes.(map[string]interface{})
 							if len(attributes) > 0 {
 								//  attributes = [
 								file.WriteString("  attributes = [\n")
-								for _, attribute := range attributes {
-									for name, value := range attribute.(map[string]interface{}) {
+								for key, values := range attributes {
+									for _, value := range values.(*schema.Set).List() {
 										//    { sn = "Doe" },
-										file.WriteString(fmt.Sprintf("    { %s = %q },\n", name, value.(string)))
+										file.WriteString(fmt.Sprintf("    { %s = %q },\n", key, value.(string)))
 									}
 								}
 								// ]
@@ -195,16 +191,17 @@ func resourceLDAPObjectCreate(d *schema.ResourceData, meta interface{}) error {
 	// we loop through the list and accumulate values when they share the same
 	// key, then we use these as attributes in the LDAP client.
 	if v, ok := d.GetOk("attributes"); ok {
-		attributes := v.(*schema.Set).List()
+		attributes := v.(map[string]interface{})
 		if len(attributes) > 0 {
 			log.Printf("[DEBUG] ldap_object::create - object %q has %d attributes", dn, len(attributes))
 			m := make(map[string][]string)
-			for _, attribute := range attributes {
-				log.Printf("[DEBUG] ldap_object::create - %q has attribute of type %T", dn, attribute)
+			for k, v := range attributes {
+				values := v.(*schema.Set).List()
+				log.Printf("[DEBUG] ldap_object::create - %q has attribute %s with %d values", dn, k, len(values))
 				// each map should only have one entry (see resource declaration)
-				for name, value := range attribute.(map[string]interface{}) {
-					log.Printf("[DEBUG] ldap_object::create - %q has attribute[%v] => %v (%T)", dn, name, value, value)
-					m[name] = append(m[name], value.(string))
+				for _, value := range values {
+					log.Printf("[DEBUG] ldap_object::create - %q has attribute[%v] => %v (%T)", dn, k, value, value)
+					m[k] = append(m[k], value.(string))
 				}
 			}
 			// now loop through the map and add attributes with theys value(s)
@@ -257,7 +254,11 @@ func resourceLDAPObjectUpdate(d *schema.ResourceData, meta interface{}) error {
 		log.Printf("[DEBUG] ldap_object::update - \n%s", printAttributes("old attributes map", o))
 		log.Printf("[DEBUG] ldap_object::update - \n%s", printAttributes("new attributes map", n))
 
-		added, changed, removed := computeDeltas(o.(*schema.Set), n.(*schema.Set))
+		added, changed, removed, err := computeDeltas(o.(map[string]interface{}), n.(map[string]interface{}))
+		if err != nil {
+			log.Printf("[ERROR] ldap_object::update - error diffing LDAP object %q with values %v", d.Id(), err)
+			return err
+		}
 		if len(added) > 0 {
 			log.Printf("[DEBUG] ldap_object::update - %d attributes added", len(added))
 			request.AddAttributes = added
@@ -392,9 +393,7 @@ func readLDAPObjectImpl(d *schema.ResourceData, meta interface{}, updateState bo
 	d.Set("object_classes", sr.Entries[0].GetAttributeValues("objectClass"))
 
 	// now deal with attributes
-	set := &schema.Set{
-		F: attributeHash,
-	}
+	attrs := map[string]interface{}{}
 
 	for _, attribute := range sr.Entries[0].Attributes {
 		log.Printf("[DEBUG] ldap_object::read - treating attribute %q of %q (%d values: %v)", attribute.Name, dn, len(attribute.Values), attribute.Values)
@@ -416,15 +415,10 @@ func readLDAPObjectImpl(d *schema.ResourceData, meta interface{}, updateState bo
 		// we do not handle name => []values, and we have a set of maps each
 		// holding a single entry name => value; multiple maps may share the
 		// same key.
-		for _, value := range attribute.Values {
-			log.Printf("[DEBUG] ldap_object::read - for %q, setting %q => %q", dn, attribute.Name, value)
-			set.Add(map[string]interface{}{
-				attribute.Name: value,
-			})
-		}
+		attrs[attribute.Name] = attribute.Values
 	}
 
-	if err := d.Set("attributes", set); err != nil {
+	if err := d.Set("attributes", attrs); err != nil {
 		log.Printf("[WARN] ldap_object::read - error setting LDAP attributes for %q : %v", dn, err)
 		return err
 	}
@@ -454,10 +448,11 @@ func attributeHash(v interface{}) int {
 func printAttributes(prefix string, attributes interface{}) string {
 	var buffer bytes.Buffer
 	buffer.WriteString(fmt.Sprintf("%s: {\n", prefix))
-	if attributes, ok := attributes.(*schema.Set); ok {
-		for _, attribute := range attributes.List() {
-			for k, v := range attribute.(map[string]interface{}) {
-				buffer.WriteString(fmt.Sprintf("    %q: %q\n", k, v.(string)))
+	if attributes, ok := attributes.(map[string]interface{}); ok {
+		for k, v := range attributes {
+			values := v.(*schema.Set).List()
+			for _, value := range values {
+				buffer.WriteString(fmt.Sprintf("    %q: %q\n", k, value.(string)))
 			}
 		}
 		buffer.WriteRune('}')
@@ -465,91 +460,47 @@ func printAttributes(prefix string, attributes interface{}) string {
 	return buffer.String()
 }
 
-func computeDeltas(os, ns *schema.Set) (added, changed, removed []ldap.PartialAttribute) {
+func computeDeltas(om, nm map[string]interface{}) (added, changed, removed []ldap.PartialAttribute, err error) {
+	var changelog diff.Changelog
 
-	rk := NewSet() // names of removed attributes
-	for _, v := range os.Difference(ns).List() {
-		for k := range v.(map[string]interface{}) {
-			rk.Add(k)
-		}
+	changelog, err = diff.Diff(om, nm)
+	if err != nil {
+		return
 	}
 
-	ak := NewSet() // names of added attributes
-	for _, v := range ns.Difference(os).List() {
-		for k := range v.(map[string]interface{}) {
-			ak.Add(k)
-		}
-	}
+	for _, change := range changelog {
+		if change.Type == "delete" {
+			if len(change.Path) == 1 {
+				// Case: Top level attribute removed
+				removed = append(removed, ldap.PartialAttribute{
+					Type: change.Path[0],
+					Vals: []string{},
+				})
 
-	kk := NewSet() // names of kept attributes
-	for _, v := range ns.Intersection(os).List() {
-		for k := range v.(map[string]interface{}) {
-			kk.Add(k)
-		}
-	}
+			} else if len(change.Path) == 2 {
+				// Case: Attribute value removed
+				changed = append(changed, ldap.PartialAttribute{
+					Type: change.Path[0],
+					Vals: []string{change.To.(string)},
+				})
 
-	ck := NewSet() // names of changed attributes
-
-	// loop over remove attributes' names
-	for _, k := range rk.List() {
-		if !ak.Contains(k) && !kk.Contains(k) {
-			// one value under this name has been removed, no other value has
-			// been added back, and there is no further value under the same
-			// name among those that were untouched; this means that it has
-			// been dropped and must go among the RemovedAttributes
-			log.Printf("[DEBUG] ldap_object::deltas - dropping attribute %q", k)
-			removed = append(removed, ldap.PartialAttribute{
-				Type: k,
-				Vals: []string{},
-			})
-		} else {
-			ck.Add(k)
-		}
-	}
-
-	for _, k := range ak.List() {
-		if !rk.Contains(k) && !kk.Contains(k) {
-			// this is the first value under this name: no value is being
-			// removed and no value is being kept; so we're adding this new
-			// attribute to the LDAP object (AddedAttributes), getting all
-			// the values under this name from the new set
-			values := []string{}
-			for _, m := range ns.List() {
-				for mk, mv := range m.(map[string]interface{}) {
-					if k == mk {
-						values = append(values, mv.(string))
-					}
-				}
-			}
-			added = append(added, ldap.PartialAttribute{
-				Type: k,
-				Vals: values,
-			})
-			log.Printf("[DEBUG] ldap_object::deltas - adding new attribute %q with values %v", k, values)
-		} else {
-			ck.Add(k)
-		}
-	}
-
-	// now loop over changed attributes and
-	for _, k := range ck.List() {
-		// the attributes in this set have been changed, in that a new value has
-		// been added or removed and it was not the last/first one; so we're
-		// adding this new attribute to the LDAP object (ModifiedAttributes),
-		// getting all the values under this name from the new set
-		values := []string{}
-		for _, m := range ns.List() {
-			for mk, mv := range m.(map[string]interface{}) {
-				if k == mk {
-					values = append(values, mv.(string))
-				}
 			}
 		}
-		changed = append(changed, ldap.PartialAttribute{
-			Type: k,
-			Vals: values,
-		})
-		log.Printf("[DEBUG] ldap_object::deltas - changing attribute %q with values %v", k, values)
+
+		if change.Type == "create" {
+			if len(change.Path) == 1 {
+				added = append(added, ldap.PartialAttribute{
+					Type: change.Path[0],
+					Vals: change.To.([]string),
+				})
+			} else {
+				changed = append(changed, ldap.PartialAttribute{
+					Type: change.Path[0],
+					Vals: []string{change.To.(string)},
+				})
+			}
+		}
 	}
+
 	return
 }
